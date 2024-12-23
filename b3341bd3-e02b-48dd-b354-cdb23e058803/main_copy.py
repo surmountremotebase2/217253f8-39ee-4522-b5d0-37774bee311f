@@ -1,103 +1,108 @@
-from surmount.base_class import Strategy, TargetAllocation
-from surmount.logging import log
-from surmount.data import InsiderTrading, InstitutionalOwnership, SocialSentiment, Dividend, FinancialStatement, Ratios
-from surmount.technical_indicators import ATR  # Keep ATR if needed
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import talib as ta
+import matplotlib.pyplot as plt
 
-class MultiDataStrategy(Strategy):
+# Fetch historical data from Yahoo Finance
+def fetch_data(ticker, start_date, end_date):
+    df = yf.download(ticker, start=start_date, end=end_date)
+    return df
 
-    def __init__(self):
-        self.tickers = ["AAPL", "GOOGL", "MSFT", "AMZN"]
-        self.data_list = [
-            InsiderTrading("AAPL"),
-            InstitutionalOwnership("AAPL"),
-            SocialSentiment("AAPL"),
-            Dividend("AAPL"),
-            FinancialStatement("AAPL"),
-            Ratios("AAPL")
-        ]
-        self.fibonacci_levels = [0.236, 0.382, 0.5, 0.618, 0.786]
-        self.atr_multiplier = 1.5
-        self.risk_reward_ratio = 2.0
+# Calculate MACD and its signal line
+def add_macd(df):
+    df['MACD'], df['MACD_signal'], _ = ta.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+    return df
 
-    @property
-    def interval(self):
-        return "1day"
+# Calculate Fibonacci retracement levels
+def calculate_fibonacci(df):
+    max_price = df['High'].max()
+    min_price = df['Low'].min()
+    diff = max_price - min_price
+    fib_levels = {
+        'Level_0': max_price,
+        'Level_23.6': max_price - 0.236 * diff,
+        'Level_38.2': max_price - 0.382 * diff,
+        'Level_50': max_price - 0.5 * diff,
+        'Level_61.8': max_price - 0.618 * diff,
+        'Level_100': min_price
+    }
+    return fib_levels
 
-    @property
-    def assets(self):
-        return self.tickers
+# Volume strategy: Check for breakout confirmation
+def volume_breakout(df, threshold=1.5):
+    avg_vol = df['Volume'].rolling(window=20).mean()
+    breakout_vol = df['Volume'] > (avg_vol * threshold)
+    return breakout_vol
 
-    @property
-    def data(self):
-        return self.data_list
+# Risk management: Implement stop-loss and take-profit
+def risk_management(df, stop_loss_pct=0.02, take_profit_pct=0.05):
+    df['Stop_loss'] = df['Close'] * (1 - stop_loss_pct)
+    df['Take_profit'] = df['Close'] * (1 + take_profit_pct)
+    return df
 
-    def calculate_fibonacci_levels(self, high, low):
-        price_range = high - low
-        return [low + price_range * level for level in self.fibonacci_levels]
+# Trading signal logic with refined parameters
+def trading_signals(df):
+    df['Signal'] = 0  # Default signal (no trade)
+    
+    # Long signal (Buy) when MACD crosses above MACD Signal line, and price is near a key Fibonacci level
+    df.loc[(df['MACD'] > df['MACD_signal']) & (df['Close'] > df['Level_50']) & volume_breakout(df), 'Signal'] = 1
+    
+    # Short signal (Sell) when MACD crosses below MACD Signal line, and price is near a key Fibonacci level
+    df.loc[(df['MACD'] < df['MACD_signal']) & (df['Close'] < df['Level_50']) & volume_breakout(df), 'Signal'] = -1
+    
+    return df
 
-    def run(self, data):
-        allocation_dict = {ticker: 0 for ticker in self.tickers}
-        for ticker in self.tickers:
-            ticker_data = data.get(("ohlcv", ticker))  # Adjust key as per the available data structure
-            insider_trading_dict = data.get(("insider_trading", ticker))
-            institutional_ownership_dict = data.get(("institutional_ownership", ticker))
-            social_sentiment_dict = data.get(("social_sentiment", ticker))
-            dividend_dict = data.get(("dividend", ticker))
-            financial_statement_dict = data.get(("financial_statement", ticker))
-            ratios_dict = data.get(("ratios", ticker))
-            
-            if not ticker_data or len(ticker_data) < 100:
-                continue
+# Backtesting strategy with risk management
+def backtest(df, stop_loss_pct=0.02, take_profit_pct=0.05):
+    df['Returns'] = df['Close'].pct_change()
+    df['Strategy_returns'] = df['Signal'].shift(1) * df['Returns']
+    
+    # Apply stop-loss and take-profit
+    df = risk_management(df, stop_loss_pct, take_profit_pct)
+    
+    # Apply stop-loss and take-profit logic
+    df['Strategy_returns'] = np.where(df['Signal'] == 1, 
+                                      np.where(df['Close'] <= df['Stop_loss'], -stop_loss_pct, 
+                                               np.where(df['Close'] >= df['Take_profit'], take_profit_pct, df['Strategy_returns'])),
+                                      df['Strategy_returns'])
+    
+    # Calculate cumulative returns
+    df['Cumulative_returns'] = (1 + df['Returns']).cumprod() - 1
+    df['Cumulative_strategy_returns'] = (1 + df['Strategy_returns']).cumprod() - 1
+    
+    return df
 
-            # Fibonacci Levels Calculation
-            high = max([row["high"] for row in ticker_data[-100:]])
-            low = min([row["low"] for row in ticker_data[-100:]])
-            fib_levels = self.calculate_fibonacci_levels(high, low)
+# Visualize strategy performance
+def plot_performance(df):
+    plt.figure(figsize=(12, 6))
+    plt.plot(df['Cumulative_returns'], label='Buy and Hold', color='blue')
+    plt.plot(df['Cumulative_strategy_returns'], label='Strategy', color='red')
+    plt.legend()
+    plt.title('Strategy vs Buy and Hold')
+    plt.show()
 
-            # ATR Calculation
-            atr = ATR(ticker, ticker_data, 14)
-            if atr is None:
-                continue
+# Main function to execute the strategy
+def run_strategy(ticker, start_date, end_date):
+    # Fetch the data
+    df = fetch_data(ticker, start_date, end_date)
+    
+    # Add technical indicators and Fibonacci retracement
+    df = add_macd(df)
+    fib_levels = calculate_fibonacci(df)
+    for level, price in fib_levels.items():
+        df[level] = price
 
-            current_price = ticker_data[-1]["close"]
+    # Generate trading signals
+    df = trading_signals(df)
+    
+    # Backtest the strategy
+    df = backtest(df)
+    
+    # Plot performance
+    plot_performance(df)
+    
+    return df
 
-            # Insider Trading Insights
-            insider_data = insider_trading_dict[-1] if insider_trading_dict else None
-            if insider_data:
-                log(f"{ticker} Insider Trading: {insider_data['transactionType']} on {insider_data['transactionDate']}")
-
-            # Institutional Ownership Insights
-            institutional_data = institutional_ownership_dict[-1] if institutional_ownership_dict else None
-            if institutional_data:
-                log(f"{ticker} Institutional Ownership: {institutional_data['ownershipPercent']}%")
-
-            # Social Sentiment Insights
-            social_sentiment = social_sentiment_dict[-1] if social_sentiment_dict else None
-            if social_sentiment:
-                log(f"{ticker} Social Sentiment: StockTwits Sentiment = {social_sentiment['stocktwitsSentiment']}, Twitter Sentiment = {social_sentiment['twitterSentiment']}")
-
-            # Dividend Insights
-            dividend_data = dividend_dict[-1] if dividend_dict else None
-            if dividend_data:
-                log(f"{ticker} Dividend: {dividend_data['dividend']} on {dividend_data['date']}")
-
-            # Financial Statement Insights
-            financial_data = financial_statement_dict[-1] if financial_statement_dict else None
-            if financial_data:
-                log(f"{ticker} Financials: Revenue = {financial_data['revenue']}")
-
-            # Ratios Insights
-            ratios_data = ratios_dict[-1] if ratios_dict else None
-            if ratios_data:
-                log(f"{ticker} Financial Ratios: Return on Equity = {ratios_data['returnOnEquity']}")
-
-            # Entry and Exit Decision Based on Fibonacci Levels and ATR
-            if fib_levels[2] < current_price < fib_levels[3]:
-                entry_price = current_price
-                stop_loss = entry_price - atr * self.atr_multiplier
-                take_profit = entry_price + (entry_price - stop_loss) * self.risk_reward_ratio
-
-                log(f"{ticker}: Entry Price = {entry_price}, Stop Loss = {stop_loss}, Take Profit = {take_profit}")
-                allocation_dict[ticker] = 1 / len(self.tickers)
-
-        return TargetAllocation(allocation_dict)
+# Example: Run the strategy for Apple (AAPL) from 2010 to 2020
+df = run_strategy('AAPL', '2010-01-01', '2020-01-01')
