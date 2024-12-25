@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-class MultiIndicatorStrategy:
+class TradingStrategy:
     def __init__(self, data, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, ema_period=200):
         """
         Initialize strategy with OHLCV DataFrame and indicator parameters
@@ -129,21 +129,3 @@ class MultiIndicatorStrategy:
             'EMA 200': f"{latest['EMA_200']:.2f}",
             'Current Signal': 'Buy' if latest['Signal'] == 1 else 'Sell' if latest['Signal'] == -1 else 'Hold'
         }
-
-# Example usage
-if __name__ == "__main__":
-    # Create sample data (replace with your actual data)
-    dates = pd.date_range(start='2017-11-16', end='2019-10-30', freq='D')
-    sample_data = pd.DataFrame({
-        'Open': np.random.randn(len(dates)).cumsum() + 100,
-        'High': np.random.randn(len(dates)).cumsum() + 102,
-        'Low': np.random.randn(len(dates)).cumsum() + 98,
-        'Close': np.random.randn(len(dates)).cumsum() + 100,
-        'Volume': np.random.randint(1000000, 10000000, len(dates))
-    }, index=dates)
-    
-    # Initialize and run strategy
-    strategy = MultiIndicatorStrategy(sample_data)
-    results = strategy.run_backtest(initial_capital=10000)
-    print("Backtest Results:", results)
-    print("Current Signals:", strategy.get_current_signals())
