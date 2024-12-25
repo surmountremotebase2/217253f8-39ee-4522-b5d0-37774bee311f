@@ -3,19 +3,23 @@ import numpy as np
 from datetime import datetime
 
 class TradingStrategy:
-    def __init__(self, data, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, ema_period=200):
+    def __init__(self, data=None, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, ema_period=200):
         """
-        Initialize strategy with OHLCV DataFrame and indicator parameters
+        Initialize strategy with optional OHLCV DataFrame and indicator parameters
         
         Parameters:
-        data (DataFrame): OHLCV data with columns ['Open', 'High', 'Low', 'Close', 'Volume']
+        data (DataFrame, optional): OHLCV data with columns ['Open', 'High', 'Low', 'Close', 'Volume']
         """
-        self.data = data.copy()
+        self.data = data.copy() if data is not None else pd.DataFrame()
         self.rsi_period = rsi_period
         self.macd_fast = macd_fast
         self.macd_slow = macd_slow
         self.macd_signal = macd_signal
         self.ema_period = ema_period
+
+    def set_data(self, data):
+        """Set the data for the strategy"""
+        self.data = data.copy()
         
     def calculate_rsi(self, prices, period=14):
         """Calculate Relative Strength Index"""
@@ -36,6 +40,9 @@ class TradingStrategy:
     
     def calculate_indicators(self):
         """Calculate all technical indicators"""
+        if self.data.empty:
+            return
+            
         # Calculate RSI
         self.data['RSI'] = self.calculate_rsi(self.data['Close'], self.rsi_period)
         
@@ -63,6 +70,9 @@ class TradingStrategy:
     
     def generate_signals(self, rsi_oversold=30, rsi_overbought=70):
         """Generate trading signals"""
+        if self.data.empty:
+            return
+            
         self.calculate_indicators()
         self.data['Signal'] = 0
         
@@ -85,6 +95,14 @@ class TradingStrategy:
     
     def run_backtest(self, initial_capital=10000, risk_percent=0.02):
         """Run backtest with initial capital and risk percentage"""
+        if self.data.empty:
+            return {
+                'Total Return': '0.00%',
+                'Sharpe Ratio': '0.00',
+                'Max Drawdown': '0.00%',
+                'Final Equity': str(initial_capital)
+            }
+            
         self.generate_signals()
         
         # Initialize portfolio metrics
@@ -114,6 +132,9 @@ class TradingStrategy:
     
     def calculate_max_drawdown(self):
         """Calculate maximum drawdown"""
+        if self.data.empty:
+            return 0.0
+            
         equity = self.data['Equity']
         peak = equity.expanding().max()
         drawdown = (equity - peak) / peak
@@ -121,6 +142,15 @@ class TradingStrategy:
     
     def get_current_signals(self):
         """Get latest indicator values and signals"""
+        if self.data.empty:
+            return {
+                'RSI': '0.00',
+                'MACD': '0.00',
+                'MACD Signal': '0.00',
+                'EMA 200': '0.00',
+                'Current Signal': 'Hold'
+            }
+            
         latest = self.data.iloc[-1]
         return {
             'RSI': f"{latest['RSI']:.2f}",
