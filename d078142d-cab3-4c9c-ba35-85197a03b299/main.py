@@ -1,57 +1,69 @@
-from surmount.base_class import Strategy, TargetAllocation
-from surmount.technical_indicators import EMA, RSI, MACD
-from surmount.data import Asset, InstitutionalOwnership, FinancialStatement, InsiderTrading, SocialSentiment, Ratios, GDPALLCountries
-from surmount.logging import log
-
+from surmount.base_class import Strategy
+import pandas as pd
+import numpy as np
 
 class TradingStrategy(Strategy):
     def __init__(self):
-        # Define a mix of tickers across different asset classes for diversification
-        self.tickers = ["SPY", "QQQ", "TLT", "GLD", "AAPL", "GOOGL"]
-        self.data_list = [InstitutionalOwnership(ticker) for ticker in self.tickers] + \
-                         [FinancialStatement(ticker) for ticker in self.tickers] + \
-                         [InsiderTrading(ticker) for ticker in self.tickers] + \
-                         [SocialSentiment(ticker) for ticker in self.tickers] + \
-                         [Ratios(ticker) for ticker in self.tickers] + \
-                         [GDPALLCountries()]
-
-    @property
-    def interval(self):
-        # Daily interval to capture long-term trends and reduce transaction costs
-        return "1day"
-
-    @property
-    def assets(self):
-        return self.tickers
-
-    @property
-    def data(self):
-        return self.data_list
+        self.rsi_period = 14
+        self.macd_fast = 12
+        self.macd_slow = 26
+        self.macd_signal = 9
+        self.ema_period = 200
+        
+    def calculate_rsi(self, prices, period=14):
+        """Calculate Relative Strength Index"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    
+    def calculate_macd(self, prices):
+        """Calculate MACD and Signal line"""
+        exp1 = prices.ewm(span=self.macd_fast).mean()
+        exp2 = prices.ewm(span=self.macd_slow).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=self.macd_signal).mean()
+        return macd, signal
+    
+    def calculate_atr(self, high, low, close, period=14):
+        """Calculate Average True Range"""
+        tr1 = high - low
+        tr2 = abs(high - close.shift())
+        tr3 = abs(low - close.shift())
+        
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return tr.rolling(window=period).mean()
 
     def run(self, data):
-        allocation_dict = {}
-        try:
-            for ticker in self.tickers:
-                # Example of dynamic allocation based on technical indicators and sentiment analysis
-                ema_short = EMA(ticker, data, length=50)
-                ema_long = EMA(ticker, data, length=200)
-                rsi = RSI(ticker, data, length=14)
-                macd = MACD(ticker, data, fast=12, slow=26)
-                sentiment = data[("social_sentiment", ticker)]
+        """
+        Main strategy execution method required by the framework
+        """
+        # Initialize the positions array
+        positions = pd.Series(index=data.index, dtype=float)
+        positions.iloc[0] = 0
 
-                # Logic for allocation based on combined indicators and sentiment analysis
-                if ema_short[-1] > ema_long[-1] and rsi[-1] < 30 and macd["MACD"][-1] > macd["signal"][-1] and sentiment[-1]["twitterSentiment"] > 0.6:
-                    allocation_dict[ticker] = 0.2  # Aggressive allocation
-                elif ema_short[-1] < ema_long[-1] or rsi[-1] > 70:
-                    allocation_dict[ticker] = 0.05  # Defensive allocation
-                else:
-                    allocation_dict[ticker] = 0.1  # Neutral allocation
+        # Calculate indicators
+        rsi = self.calculate_rsi(data['Close'], self.rsi_period)
+        macd, macd_signal = self.calculate_macd(data['Close'])
+        ema_200 = data['Close'].ewm(span=self.ema_period).mean()
+        atr = self.calculate_atr(data['High'], data['Low'], data['Close'])
 
-            # Normalize allocations to ensure they sum to 1
-            allocation_sum = sum(allocation_dict.values())
-            allocation_dict = {ticker: alloc / allocation_sum for ticker, alloc in allocation_dict.items()}
-        except Exception as e:
-            log(f"Error in strategy execution: {e}")
-            allocation_dict = {ticker: 1.0 / len(self.tickers) for ticker in self.tickers}  # Equal allocation as a fallback
+        # Generate signals
+        for i in range(1, len(data)):
+            positions.iloc[i] = 0  # Default position
 
-        return TargetAllocation(allocation_dict)
+            # Long signals
+            if (rsi.iloc[i-1] < 30 and  # RSI oversold
+                macd.iloc[i-1] > macd_signal.iloc[i-1] and  # MACD crossover
+                data['Close'].iloc[i-1] > ema_200.iloc[i-1]):  # Price above EMA
+                positions.iloc[i] = 1
+
+            # Short signals
+            elif (rsi.iloc[i-1] > 70 and  # RSI overbought
+                  macd.iloc[i-1] < macd_signal.iloc[i-1] and  # MACD crossunder
+                  data['Close'].iloc[i-1] < ema_200.iloc[i-1]):  # Price below EMA
+                positions.iloc[i] = -1
+
+        return positions
