@@ -18,7 +18,7 @@ class TradingStrategy(Strategy):
     @property
     def interval(self):
         """Return the trading interval for the strategy"""
-        return "1d"
+        return "day"  # Changed from "1d" to "day" to match framework requirements
         
     def calculate_rsi(self, prices, period=14):
         """Calculate Relative Strength Index"""
