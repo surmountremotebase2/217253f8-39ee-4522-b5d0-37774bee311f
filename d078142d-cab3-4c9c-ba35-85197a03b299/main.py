@@ -9,6 +9,16 @@ class TradingStrategy(Strategy):
         self.macd_slow = 26
         self.macd_signal = 9
         self.ema_period = 200
+    
+    @property
+    def assets(self):
+        """Return the assets that the strategy will trade"""
+        return ["SPY"]
+    
+    @property
+    def interval(self):
+        """Return the trading interval for the strategy"""
+        return "1d"
         
     def calculate_rsi(self, prices, period=14):
         """Calculate Relative Strength Index"""
