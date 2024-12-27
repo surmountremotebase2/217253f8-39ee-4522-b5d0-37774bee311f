@@ -1,13 +1,14 @@
+from surmount.base_class import Strategy
 import pandas as pd
 import numpy as np
 from typing import List, Tuple, Dict
 
-class TradingStrategy:
-    def __init__(self, capital: float = 10000, risk_per_trade: float = 0.02):
-        self.capital = capital
-        self.risk_per_trade = risk_per_trade
+class TradingStrategy(Strategy):
+    def __init__(self):
+        super().__init__()
         self.positions: Dict = {}
         self.trade_history: List = []
+        self.risk_per_trade = 0.02
         
     def calculate_moving_averages(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate 20 and 200 day moving averages."""
@@ -37,9 +38,9 @@ class TradingStrategy:
         avg_volume = df['Volume'].rolling(window=20).mean().iloc[index]
         return df['Volume'].iloc[index] > avg_volume * 1.2
     
-    def calculate_position_size(self, entry: float, stop: float) -> float:
+    def calculate_position_size(self, capital: float, entry: float, stop: float) -> float:
         """Calculate position size based on risk."""
-        risk_amount = self.capital * self.risk_per_trade
+        risk_amount = capital * self.risk_per_trade
         position_size = risk_amount / abs(entry - stop)
         return position_size
     
@@ -71,31 +72,6 @@ class TradingStrategy:
             
         return False, ""
     
-    def check_exit_signals(self, df: pd.DataFrame, index: int, position: Dict) -> bool:
-        """Check for exit signals."""
-        current_data = df.iloc[index]
-        entry_price = position['entry_price']
-        position_type = position['type']
-        
-        # Technical breakdown
-        if position_type == "LONG":
-            if current_data['Close'] < current_data['MA20']:
-                return True
-        else:  # SHORT
-            if current_data['Close'] > current_data['MA20']:
-                return True
-                
-        # Target reached (2-3x risk)
-        stop_distance = abs(entry_price - position['stop_loss'])
-        if position_type == "LONG":
-            if current_data['Close'] >= entry_price + (stop_distance * 2):
-                return True
-        else:  # SHORT
-            if current_data['Close'] <= entry_price - (stop_distance * 2):
-                return True
-                
-        return False
-    
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate Average True Range."""
         tr = pd.DataFrame()
@@ -104,53 +80,42 @@ class TradingStrategy:
         tr['l-pc'] = abs(df['Low'] - df['Close'].shift(1))
         tr['tr'] = tr[['h-l', 'h-pc', 'l-pc']].max(axis=1)
         return tr['tr'].rolling(period).mean()
-    
-    def run(self, df: pd.DataFrame) -> List:
-        """Run the trading strategy on historical data."""
+
+    def trade(self, data: pd.DataFrame) -> List[Dict]:
+        """
+        Required method for Surmount strategy.
+        Returns a list of trades based on the data.
+        """
+        df = data.copy()
         df = self.calculate_moving_averages(df)
         df = self.calculate_indicators(df)
         df['ATR'] = self.calculate_atr(df)
         
+        trades = []
         for i in range(len(df)):
-            # Check for exits on existing positions
-            for symbol, position in list(self.positions.items()):
-                if self.check_exit_signals(df, i, position):
-                    exit_price = df['Close'].iloc[i]
-                    pnl = (exit_price - position['entry_price']) * position['size']
-                    if position['type'] == "SHORT":
-                        pnl *= -1
-                    
-                    self.trade_history.append({
-                        'entry_date': position['entry_date'],
-                        'exit_date': df.index[i],
-                        'type': position['type'],
-                        'entry': position['entry_price'],
-                        'exit': exit_price,
-                        'pnl': pnl,
-                        'size': position['size']
-                    })
-                    del self.positions[symbol]
-            
-            # Check for new entries
+            # Skip if not enough data
+            if i < 200:
+                continue
+                
             signal, direction = self.check_entry_signals(df, i)
-            if signal and len(self.positions) < 5:  # Maximum 5 concurrent positions
+            
+            if signal:
                 entry_price = df['Close'].iloc[i]
                 stop_loss = entry_price - (2 * df['ATR'].iloc[i])
                 if direction == "SHORT":
                     stop_loss = entry_price + (2 * df['ATR'].iloc[i])
                 
-                position_size = self.calculate_position_size(entry_price, stop_loss)
+                # Calculate position size (assuming $10000 starting capital for this example)
+                position_size = self.calculate_position_size(10000, entry_price, stop_loss)
                 
-                self.positions[f"position_{i}"] = {
-                    'type': direction,
-                    'entry_price': entry_price,
-                    'stop_loss': stop_loss,
+                trade = {
+                    'date': df.index[i],
+                    'action': direction,
+                    'price': entry_price,
                     'size': position_size,
-                    'entry_date': df.index[i]
+                    'stop_loss': stop_loss,
+                    'take_profit': entry_price + (abs(entry_price - stop_loss) * 2) if direction == "LONG" else entry_price - (abs(entry_price - stop_loss) * 2)
                 }
+                trades.append(trade)
         
-        return self.trade_history
-
-# Function to get strategy (required by backtester)
-def get_strategy(capital: float = 10000) -> TradingStrategy:
-    return TradingStrategy(capital=capital)
+        return trades
